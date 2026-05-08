@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual envs
+venv/
+env/
+.venv/
+.env/
+
+# Secrets — never commit
+.env
+*.env
+
+# Generated brief files (ephemeral on server, download via ZIP)
+briefs/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*.swo

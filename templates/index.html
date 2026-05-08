@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Creative Brief Maker — adtechnacity</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body style="margin:0;background:#fafafa">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    {% raw %}
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    /* ─── Icons (inline SVG — no lucide-react needed) ─────────────────────── */
+    const Icon = ({ children, ...rest }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+           strokeLinejoin="round" {...rest}>
+        {children}
+      </svg>
+    );
+    const ChevronDown = (p) => <Icon {...p}><polyline points="6 9 12 15 18 9" /></Icon>;
+    const CheckIcon   = (p) => <Icon {...p}><polyline points="20 6 9 17 4 12" /></Icon>;
+    const AlertCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></Icon>;
+    const ZapIcon     = (p) => <Icon {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></Icon>;
+    const SaveIcon    = (p) => <Icon {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></Icon>;
+    const UploadCloud = (p) => <Icon {...p}><polyline points="16 16 12 12 8 16" /><line x1="12" y1="12" x2="12" y2="21" /><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" /></Icon>;
+
+    /* ─── Field configuration ──────────────────────────────────────────────── */
+    const FIELD_ORDER = [
+      'script', 'talent', 'setting', 'duration',
+      'inspirationVideo', 'referenceLink', 'performanceNotes',
+      'platform', 'orientation', 'brand', 'date',
+    ];
+
+    const FIELD_META = {
+      script:           { label: 'Script',           priority: 'critical',  multiline: true,  hint: 'The spoken words — this is the core of your concept.' },
+      talent:           { label: 'Talent',            priority: 'critical',  multiline: false, hint: 'Who\'s in the shot? Age range, vibe, representation notes.' },
+      setting:          { label: 'Setting',           priority: 'important', multiline: false, hint: 'Where is this filmed? Couch, car, kitchen — be specific.' },
+      duration:         { label: 'Duration',          priority: 'important', multiline: false, hint: '15–60s is ideal for Meta. Use a range, e.g. "20–30 sec".' },
+      inspirationVideo: { label: 'Inspiration video', priority: 'important', multiline: false, hint: 'Reference video title or short description — show don\'t tell.' },
+      referenceLink:    { label: 'Reference link',    priority: 'optional',  multiline: false, hint: 'URL the creator should watch before filming.', inputType: 'url' },
+      performanceNotes: { label: 'Concept / Vibe',   priority: 'optional',  multiline: false, hint: 'Tone, delivery style, format notes for the creator.' },
+      platform:         { label: 'Platform',          priority: 'critical',  multiline: false, hint: 'Format changes everything — Meta, TikTok, YouTube Shorts.' },
+      orientation:      { label: 'Orientation',       priority: 'optional',  multiline: false, hint: 'vertical (9:16), square (1:1), or horizontal (16:9).', inputType: 'select', options: ['vertical', 'square', 'horizontal'] },
+      brand:            { label: 'Brand',             priority: 'optional',  multiline: false, hint: 'Brand name as it should appear on the brief.' },
+      date:             { label: 'Submission date',   priority: 'optional',  multiline: false, hint: 'MMDDYY format — used in the output filename.' },
+    };
+
+    const PRIORITY_COLORS = {
+      critical:  { bg: 'rgba(239,68,68,0.05)',   border: 'rgba(239,68,68,0.2)',    badge: '#fee2e2', badgeText: '#991b1b' },
+      important: { bg: 'rgba(251,146,60,0.05)',  border: 'rgba(251,146,60,0.2)',   badge: '#ffedd5', badgeText: '#92400e' },
+      optional:  { bg: 'rgba(148,163,184,0.05)', border: 'rgba(148,163,184,0.15)', badge: '#f3f4f6', badgeText: '#374151' },
+    };
+
+    const CORE_FIELDS = ['script', 'talent', 'platform', 'duration', 'setting'];
+
+    /* ─── API field mappers ────────────────────────────────────────────────── */
+    function backendToFrontend(c, idx) {
+      return {
+        id:               c.index ?? idx + 1,
+        name:             c.title || `Concept ${idx + 1}`,
+        createAsanaTask:  true,   // on by default
+        fields: {
+          script:           c.script          || '',
+          talent:           c.talent          || '',
+          setting:          c.setting         || '',
+          duration:         c.duration        || '',
+          inspirationVideo: c.inspiration     || '',
+          referenceLink:    c.reference_link  || '',
+          performanceNotes: c.format_vibe     || '',
+          platform:         c.platform        || 'Meta',
+          orientation:      c.orientation     || 'vertical',
+          brand:            c.brand           || 'SelfFinder',
+          date:             c.submission_date || '',
+        },
+      };
+    }
+
+    function frontendToBackend(c) {
+      return {
+        index:           c.id,
+        title:           c.name,
+        script:          c.fields.script,
+        talent:          c.fields.talent,
+        setting:         c.fields.setting,
+        duration:        c.fields.duration,
+        inspiration:     c.fields.inspirationVideo,
+        reference_link:  c.fields.referenceLink,
+        format_vibe:     c.fields.performanceNotes,
+        platform:        c.fields.platform,
+        orientation:     c.fields.orientation,
+        brand:           c.fields.brand,
+        submission_date: c.fields.date,
+        missing:         [],
+      };
+    }
+
+    /* ─── Helpers ──────────────────────────────────────────────────────────── */
+    const wordCount = (t) => (t || '').trim().split(/\s+/).filter(Boolean).length;
+    const durationHint = (w) => {
+      if (w < 5) return '';
+      return `~${Math.round((w / 125) * 60)}s`;
+    };
+    const timeSince = (ts) => {
+      const s = Math.round((Date.now() - ts) / 1000);
+      return s < 60 ? `${s}s ago` : `${Math.round(s / 60)}m ago`;
+    };
+
+    /* ─── Global CSS ───────────────────────────────────────────────────────── */
+    const CSS = `
+      @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@700&family=Inter:wght@400;500;600;700&display=swap');
+      *, *::before, *::after { box-sizing: border-box; }
+      body { margin: 0; font-family: 'Inter', sans-serif; }
+      .mono { font-family: 'Space Mono', monospace; font-weight: 700; }
+
+      @keyframes spin     { to { transform: rotate(360deg); } }
+      @keyframes slide-up { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+      @keyframes pulse-in { 0%,100% { transform:scale(1); } 50% { transform:scale(1.04); } }
+
+      .anim-in    { animation: slide-up 0.4s ease-out both; }
+      .anim-pulse { animation: pulse-in 0.5s ease; }
+
+      .fi {
+        width:100%; font-family:'Inter',sans-serif; font-size:13px; color:#1e293b;
+        background:white; border:1.5px solid #e2e8f0; border-radius:8px;
+        padding:8px 12px; outline:none;
+        transition:border-color 0.15s, box-shadow 0.15s;
+      }
+      .ft {
+        width:100%; font-family:'Inter',sans-serif; font-size:13px; color:#1e293b;
+        background:white; border:1.5px solid #e2e8f0; border-radius:8px;
+        padding:10px 12px; outline:none; resize:vertical; min-height:110px;
+        line-height:1.65; transition:border-color 0.15s, box-shadow 0.15s;
+      }
+      .fi:focus, .ft:focus {
+        border-color:#ff5722;
+        box-shadow:0 0 0 3px rgba(255,87,34,0.1);
+      }
+
+      .btn-primary {
+        display:inline-flex; align-items:center; gap:8px;
+        background:linear-gradient(135deg,#ff5722 0%,#f4511e 100%);
+        color:white; border:none; border-radius:10px; padding:12px 26px;
+        font-weight:700; font-size:14px; cursor:pointer; white-space:nowrap;
+        box-shadow:0 4px 15px rgba(255,87,34,0.3);
+        transition:transform 0.25s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.25s;
+        font-family:'Inter',sans-serif;
+      }
+      .btn-primary:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 6px 22px rgba(255,87,34,0.4); }
+      .btn-primary:active                { transform:translateY(0); }
+      .btn-primary:disabled              { opacity:0.45; cursor:not-allowed; }
+
+      .btn-text {
+        background:none; border:none; cursor:pointer; font-weight:700;
+        color:#ea580c; font-family:'Inter',sans-serif; padding:0; font-size:13px;
+      }
+      .btn-text:hover { color:#c2410c; }
+
+      .drop-zone {
+        border:2px dashed #cbd5e1; border-radius:20px; padding:56px 40px;
+        text-align:center; cursor:pointer; transition:all 0.2s;
+      }
+      .drop-zone:hover, .drop-zone.over { border-color:#ff5722; background:#fff5f2; }
+
+      .card {
+        background:white; border-radius:16px; border:2px solid #e2e8f0;
+        overflow:hidden; transition:border-color 0.2s, box-shadow 0.2s;
+      }
+      .card.selected { border-color:#ff5722; box-shadow:0 4px 20px rgba(255,87,34,0.1); }
+
+      .sticky-bar {
+        position:sticky; top:0; z-index:20;
+        background:rgba(255,255,255,0.96); backdrop-filter:blur(14px);
+        border-bottom:1px solid rgba(0,0,0,0.06);
+      }
+
+      .spinner {
+        width:14px; height:14px; border:2px solid rgba(255,255,255,0.35);
+        border-top-color:white; border-radius:50%; animation:spin 0.6s linear infinite;
+      }
+
+      .title-input {
+        flex:1; font-family:'Space Mono',monospace; font-size:16px; font-weight:700;
+        color:#0f172a; background:transparent; border:none;
+        border-bottom:1.5px solid transparent; outline:none;
+        transition:border-color 0.15s; padding:2px 0;
+      }
+      .title-input:focus { border-bottom-color:#ff5722; }
+
+      .hint-bubble {
+        font-size:12px; color:#475569; font-style:italic;
+        padding:8px 12px; background:rgba(255,255,255,0.8);
+        border-left:3px solid #e2e8f0; border-radius:0 6px 6px 0; margin-bottom:8px;
+      }
+
+      .parse-btn {
+        width:100%; background:#0f172a; color:white; border:none;
+        padding:15px; border-radius:12px; font-size:16px; font-weight:700;
+        cursor:pointer; transition:background 0.2s; font-family:'Inter',sans-serif;
+      }
+      .parse-btn:hover:not(:disabled) { background:#1e293b; }
+      .parse-btn:disabled { background:#cbd5e1; cursor:not-allowed; }
+    `;
+
+    /* ═══════════════════════════════════════════════════════════════════════ */
+    /*  Main App                                                               */
+    /* ═══════════════════════════════════════════════════════════════════════ */
+    function App() {
+      const [step,           setStep]           = useState(1);
+      const [uploadedFile,   setUploadedFile]   = useState(null);
+      const [pastedText,     setPastedText]     = useState('');
+      const [concepts,       setConcepts]       = useState([]);
+      const [selected,       setSelected]       = useState(new Set());
+      const [globalVals,     setGlobalVals]     = useState({ brand: '', platform: '', orientation: '', date: '' });
+      const [globalOpen,     setGlobalOpen]     = useState(false);
+      const [isLoading,      setIsLoading]      = useState(false);
+      const [isGenerating,   setIsGenerating]   = useState(false);
+      const [genProgress,    setGenProgress]    = useState(0);
+      const [draftTs,        setDraftTs]        = useState(null);
+      const [activeHint,     setActiveHint]     = useState(null);
+      const [error,          setError]          = useState('');
+      const [dragOver,       setDragOver]       = useState(false);
+      const [generatedCount, setGeneratedCount] = useState(0);
+      const [asanaConfigured, setAsanaConfigured] = useState(null); // null=checking, true/false
+      const [asanaStatus,     setAsanaStatus]     = useState('idle'); // idle|creating|done|error
+      const [asanaTasks,      setAsanaTasks]      = useState([]);
+      const fileRef = useRef(null);
+
+      /* Auto-save draft every 5s */
+      useEffect(() => {
+        const id = setInterval(() => {
+          if (step === 2 && concepts.length > 0) {
+            localStorage.setItem('briefDraft', JSON.stringify({ ts: Date.now(), concepts, selected: [...selected] }));
+            setDraftTs(Date.now());
+          }
+        }, 5000);
+        return () => clearInterval(id);
+      }, [step, concepts, selected]);
+
+      /* Check Asana token on mount */
+      useEffect(() => {
+        fetch('/asana-status')
+          .then(r => r.json())
+          .then(d => setAsanaConfigured(d.configured))
+          .catch(() => setAsanaConfigured(false));
+      }, []);
+
+      /* Keyboard shortcuts */
+      useEffect(() => {
+        const fn = (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && step === 2 && selected.size > 0)
+            handleGenerate();
+          if (e.key === 'Escape') setGlobalOpen(false);
+        };
+        window.addEventListener('keydown', fn);
+        return () => window.removeEventListener('keydown', fn);
+      }, [step, selected, concepts]);
+
+      /* ── /parse ──────────────────────────────────────────────────────────── */
+      const runParse = async (formData) => {
+        setIsLoading(true); setError('');
+        try {
+          const res  = await fetch('/parse', { method: 'POST', body: formData });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          const parsed = data.concepts.map(backendToFrontend);
+          setConcepts(parsed);
+          setSelected(new Set(parsed.map(c => c.id)));
+          setStep(2);
+        } catch (err) {
+          setError(err.message || 'Failed to parse submission.');
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      const handleFileUpload = (file) => {
+        setUploadedFile(file);
+        const fd = new FormData(); fd.append('file', file);
+        runParse(fd);
+      };
+
+      const handleTextParse = () => {
+        if (!pastedText.trim()) return;
+        const fd = new FormData(); fd.append('text', pastedText);
+        runParse(fd);
+      };
+
+      /* ── /generate ───────────────────────────────────────────────────────── */
+      const handleGenerate = async () => {
+        setIsGenerating(true); setGenProgress(10); setError('');
+        const toExport = concepts.filter(c => selected.has(c.id));
+        const tick = setInterval(() => setGenProgress(p => Math.min(p + Math.random() * 18, 85)), 350);
+        try {
+          const res = await fetch('/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ concepts: toExport.map(frontendToBackend) }),
+          });
+          clearInterval(tick);
+          if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
+          setGenProgress(100);
+          const blob = await res.blob();
+          const url  = URL.createObjectURL(blob);
+          const a    = Object.assign(document.createElement('a'), { href: url, download: 'creator_briefs.zip' });
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a); URL.revokeObjectURL(url);
+
+          // Determine which concepts need Asana tasks
+          const asanaConcepts = toExport.filter(c => c.createAsanaTask);
+          setGeneratedCount(toExport.length);
+          setAsanaTasks([]);
+          setAsanaStatus(asanaConcepts.length > 0 ? 'creating' : 'idle');
+
+          setIsGenerating(false); setGenProgress(0); setStep(3);
+
+          // Fire Asana creation in the background (non-blocking)
+          if (asanaConcepts.length > 0 && asanaConfigured) {
+            fetch('/create-asana-tasks', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ concepts: asanaConcepts.map(frontendToBackend) }),
+            })
+              .then(r => r.json())
+              .then(d => { setAsanaTasks(d.tasks || []); setAsanaStatus('done'); })
+              .catch(() => setAsanaStatus('error'));
+          } else if (asanaConcepts.length > 0 && !asanaConfigured) {
+            setAsanaStatus('unconfigured');
+          }
+
+        } catch (err) {
+          clearInterval(tick);
+          setError(err.message || 'Generation failed.');
+          setIsGenerating(false); setGenProgress(0);
+        }
+      };
+
+      /* ── Concept helpers ─────────────────────────────────────────────────── */
+      const toggleConcept = (id) => {
+        const s = new Set(selected);
+        s.has(id) ? s.delete(id) : s.add(id);
+        setSelected(s);
+      };
+
+      const toggleAsanaTask = (cIdx) => {
+        const next = [...concepts];
+        next[cIdx] = { ...next[cIdx], createAsanaTask: !next[cIdx].createAsanaTask };
+        setConcepts(next);
+      };
+
+      const updateField = (cIdx, key, val) => {
+        const next = [...concepts];
+        next[cIdx] = { ...next[cIdx], fields: { ...next[cIdx].fields, [key]: val } };
+        setConcepts(next);
+      };
+
+      const applyGlobal = () => {
+        setConcepts(concepts.map(c => ({
+          ...c, fields: {
+            ...c.fields,
+            ...(globalVals.brand       && { brand:       globalVals.brand }),
+            ...(globalVals.platform    && { platform:    globalVals.platform }),
+            ...(globalVals.orientation && { orientation: globalVals.orientation }),
+            ...(globalVals.date        && { date:        globalVals.date }),
+          },
+        })));
+        setGlobalOpen(false);
+      };
+
+      /* ── Computed stats ──────────────────────────────────────────────────── */
+      const completeness = (() => {
+        if (!concepts.length) return 0;
+        const total  = concepts.length * CORE_FIELDS.length;
+        const filled = concepts.reduce((s, c) => s + CORE_FIELDS.filter(f => c.fields[f]?.trim()).length, 0);
+        return Math.round((filled / total) * 100);
+      })();
+
+      const missingCount = concepts.reduce((acc, c) => {
+        if (!selected.has(c.id)) return acc;
+        return acc + CORE_FIELDS.filter(f => !c.fields[f]?.trim()).length;
+      }, 0);
+
+      const asanaTaskCount = concepts.filter(c => selected.has(c.id) && c.createAsanaTask).length;
+
+      /* ═══════════════════════════════════════════════════════════════════ */
+      /*  STEP 1 — Upload                                                    */
+      /* ═══════════════════════════════════════════════════════════════════ */
+      if (step === 1) return (
+        <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#fafafa 0%,#fff 55%,#f0f4ff 100%)' }}>
+          <style>{CSS}</style>
+          <div style={{ maxWidth:640, margin:'0 auto', padding:'72px 24px' }} className="anim-in">
+
+            <div style={{ color:'#ea580c', fontSize:11, fontWeight:700, letterSpacing:'0.12em', marginBottom:14 }}>STEP 1 OF 2</div>
+            <h1 className="mono" style={{ fontSize:44, margin:'0 0 12px', color:'#0f172a', lineHeight:1.1 }}>
+              Upload your<br/>submission
+            </h1>
+            <p style={{ color:'#64748b', fontSize:17, margin:'0 0 48px', lineHeight:1.6 }}>
+              Drop in a{' '}
+              <code style={{ background:'#f1f5f9', padding:'1px 6px', borderRadius:4, fontSize:13 }}>.docx</code>,{' '}
+              <code style={{ background:'#f1f5f9', padding:'1px 6px', borderRadius:4, fontSize:13 }}>.txt</code>, or{' '}
+              <code style={{ background:'#f1f5f9', padding:'1px 6px', borderRadius:4, fontSize:13 }}>.md</code> file — or paste the brief text below.
+            </p>
+
+            {error && (
+              <div style={{ background:'#fef2f2', border:'1px solid #fecaca', borderRadius:12, padding:'14px 18px', marginBottom:24, color:'#991b1b', fontSize:13, display:'flex', alignItems:'center', gap:10 }}>
+                <AlertCircle style={{ width:16, height:16, flexShrink:0 }} />{error}
+              </div>
+            )}
+
+            {/* Drop zone */}
+            <div
+              className={`drop-zone${dragOver ? ' over' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileUpload(f); }}
+              onClick={() => fileRef.current?.click()}
+            >
+              <div style={{ display:'inline-flex', background:'#fff5f2', borderRadius:'50%', padding:20, marginBottom:18 }}>
+                <UploadCloud style={{ width:32, height:32, color:'#ea580c' }} />
+              </div>
+              <h3 className="mono" style={{ margin:'0 0 6px', fontSize:19, color:'#0f172a', fontWeight:700 }}>
+                Drag &amp; drop your file here
+              </h3>
+              <p style={{ color:'#94a3b8', margin:'0 0 24px', fontSize:13 }}>Supports .docx, .txt, .md</p>
+              <button className="btn-primary" onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
+                CHOOSE FILE
+              </button>
+              <input ref={fileRef} type="file" style={{ display:'none' }} accept=".docx,.txt,.md"
+                onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); }} />
+            </div>
+
+            {uploadedFile && (
+              <div className="anim-pulse" style={{ background:'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:12, padding:'13px 18px', marginTop:16, display:'flex', alignItems:'center', gap:10, color:'#166534', fontSize:13 }}>
+                <CheckIcon style={{ width:16, height:16, flexShrink:0 }} />
+                File loaded: <strong>{uploadedFile.name}</strong>
+                {isLoading && <span style={{ marginLeft:'auto', color:'#64748b' }}>Parsing…</span>}
+              </div>
+            )}
+
+            {/* Paste */}
+            <div style={{ textAlign:'center', margin:'32px 0 14px', color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:'0.12em', fontWeight:600 }}>
+              or paste text
+            </div>
+
+            <textarea
+              className="ft"
+              value={pastedText}
+              onChange={(e) => setPastedText(e.target.value)}
+              placeholder="Paste your brief submission here…"
+              style={{ height:160, fontSize:14, borderRadius:14 }}
+            />
+
+            <button
+              className="parse-btn"
+              onClick={handleTextParse}
+              disabled={!pastedText.trim() || isLoading}
+              style={{ marginTop:12 }}
+            >
+              {isLoading ? 'Parsing…' : 'Parse submission →'}
+            </button>
+          </div>
+        </div>
+      );
+
+      /* ═══════════════════════════════════════════════════════════════════ */
+      /*  STEP 3 — Done                                                      */
+      /* ═══════════════════════════════════════════════════════════════════ */
+      if (step === 3) return (
+        <div style={{ minHeight:'100vh', background:'linear-gradient(135deg,#fafafa,#fff,#f0f4ff)', display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}>
+          <style>{CSS}</style>
+          <div className="anim-in" style={{ maxWidth:560, width:'100%' }}>
+
+            {/* Done header */}
+            <div style={{ textAlign:'center', marginBottom:36 }}>
+              <div style={{ fontSize:64, marginBottom:16 }}>🎉</div>
+              <h1 className="mono" style={{ fontSize:36, color:'#0f172a', margin:'0 0 10px' }}>Briefs generated!</h1>
+              <p style={{ color:'#64748b', fontSize:15, margin:'0 0 4px' }}>
+                ZIP downloaded with <strong>{generatedCount}</strong> PDF + DOCX brief{generatedCount !== 1 ? 's' : ''}.
+              </p>
+              <p style={{ color:'#94a3b8', fontSize:12, margin:0 }}>
+                Check your Downloads folder for <strong>creator_briefs.zip</strong>
+              </p>
+            </div>
+
+            {/* Asana results panel */}
+            {asanaStatus !== 'idle' && (
+              <div style={{ background:'white', border:'1.5px solid #e2e8f0', borderRadius:16, overflow:'hidden', marginBottom:28 }}>
+                {/* Panel header */}
+                <div style={{ padding:'14px 20px', borderBottom:'1px solid #f1f5f9', display:'flex', alignItems:'center', gap:10 }}>
+                  <span style={{ fontSize:18 }}>📋</span>
+                  <div>
+                    <div className="mono" style={{ fontSize:14, color:'#0f172a' }}>Asana tasks</div>
+                    <div style={{ fontSize:11, color:'#64748b' }}>Videos &amp; GIFs board</div>
+                  </div>
+                  {asanaStatus === 'creating' && (
+                    <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:8, fontSize:12, color:'#64748b' }}>
+                      <div style={{ width:13, height:13, border:'2px solid #c7d2fe', borderTopColor:'#4f46e5', borderRadius:'50%', animation:'spin 0.6s linear infinite' }} />
+                      Creating tasks…
+                    </div>
+                  )}
+                  {asanaStatus === 'done' && (
+                    <div style={{ marginLeft:'auto', fontSize:12, color:'#16a34a', fontWeight:600 }}>
+                      ✓ {asanaTasks.filter(t => t.ok).length} of {asanaTasks.length} created
+                    </div>
+                  )}
+                  {asanaStatus === 'error' && (
+                    <div style={{ marginLeft:'auto', fontSize:12, color:'#dc2626', fontWeight:600 }}>⚠ Failed</div>
+                  )}
+                  {asanaStatus === 'unconfigured' && (
+                    <div style={{ marginLeft:'auto', fontSize:12, color:'#dc2626', fontWeight:600 }}>⚠ ASANA_TOKEN not set</div>
+                  )}
+                </div>
+
+                {/* Task list */}
+                {asanaStatus === 'creating' && (
+                  <div style={{ padding:'16px 20px', color:'#64748b', fontSize:13 }}>
+                    Generating briefs and uploading to Asana…
+                  </div>
+                )}
+                {asanaStatus === 'done' && asanaTasks.map((t, i) => (
+                  <div key={i} style={{ padding:'12px 20px', borderBottom: i < asanaTasks.length - 1 ? '1px solid #f8fafc' : 'none', display:'flex', alignItems:'center', gap:12 }}>
+                    <span style={{ fontSize:15 }}>{t.ok ? '✅' : '❌'}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:'#1e293b' }}>{t.title}</div>
+                      {t.error && <div style={{ fontSize:11, color:'#ef4444', marginTop:2 }}>{t.error}</div>}
+                    </div>
+                    {t.ok && t.task_url && (
+                      <a href={t.task_url} target="_blank" rel="noreferrer"
+                         style={{ fontSize:12, color:'#4f46e5', fontWeight:600, textDecoration:'none', flexShrink:0, padding:'5px 12px', background:'#eef2ff', borderRadius:20 }}>
+                        View in Asana →
+                      </a>
+                    )}
+                  </div>
+                ))}
+                {asanaStatus === 'unconfigured' && (
+                  <div style={{ padding:'16px 20px', fontSize:13, color:'#64748b', lineHeight:1.6 }}>
+                    Set the <code style={{ background:'#f1f5f9', padding:'1px 6px', borderRadius:4 }}>ASANA_TOKEN</code> environment variable on the server and restart to enable Asana integration.
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              className="btn-primary"
+              style={{ width:'100%', justifyContent:'center', fontSize:15, padding:'14px' }}
+              onClick={() => {
+                setStep(1); setUploadedFile(null); setPastedText('');
+                setConcepts([]); setSelected(new Set()); setError('');
+                setAsanaStatus('idle'); setAsanaTasks([]);
+              }}
+            >
+              Start new submission
+            </button>
+          </div>
+        </div>
+      );
+
+      /* ═══════════════════════════════════════════════════════════════════ */
+      /*  STEP 2 — Review & Generate                                         */
+      /* ═══════════════════════════════════════════════════════════════════ */
+      return (
+        <div style={{ minHeight:'100vh', paddingBottom:80, background:'linear-gradient(135deg,#fafafa 0%,#fff 55%,#f0f4ff 100%)' }}>
+          <style>{CSS}</style>
+
+          {/* ── Sticky header ─────────────────────────────────────────────── */}
+          <div className="sticky-bar">
+            <div style={{ maxWidth:900, margin:'0 auto', padding:'14px 24px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 }}>
+              <div>
+                <div className="mono" style={{ color:'#0f172a', fontSize:15, marginBottom:4 }}>✨ Review your briefs</div>
+                <div style={{ display:'flex', gap:18, fontSize:12, color:'#64748b', fontWeight:500, flexWrap:'wrap' }}>
+                  <span>Concepts: <strong style={{ color:'#ea580c' }}>{concepts.length}</strong></span>
+                  <span>Selected: <strong style={{ color:'#ea580c' }}>{selected.size}</strong></span>
+                  <span style={{ color: completeness === 100 ? '#16a34a' : '#ea580c' }}>
+                    Core fields: <strong>{completeness}%</strong>
+                  </span>
+                  {asanaTaskCount > 0 && (
+                    <span style={{ color: asanaConfigured ? '#4f46e5' : '#ef4444' }}>
+                      📋 {asanaTaskCount} Asana task{asanaTaskCount !== 1 ? 's' : ''}
+                      {asanaConfigured === false ? ' (token missing)' : ''}
+                    </span>
+                  )}
+                  {draftTs && (
+                    <span style={{ display:'inline-flex', alignItems:'center', gap:4, color:'#94a3b8' }}>
+                      <SaveIcon style={{ width:11, height:11 }} /> saved {timeSince(draftTs)}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button className="btn-primary" onClick={handleGenerate} disabled={selected.size === 0 || isGenerating}>
+                {isGenerating
+                  ? <><div className="spinner" />{Math.round(genProgress)}%</>
+                  : <><ZapIcon style={{ width:15, height:15 }} />Generate Selected</>
+                }
+              </button>
+            </div>
+
+            {(missingCount > 0 || error) && (
+              <div style={{ maxWidth:900, margin:'0 auto', padding:'0 24px 10px', display:'flex', flexDirection:'column', gap:4 }}>
+                {missingCount > 0 && (
+                  <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:12, color:'#b45309' }}>
+                    <AlertCircle style={{ width:13, height:13 }} />
+                    {missingCount} core field{missingCount > 1 ? 's' : ''} need attention
+                  </div>
+                )}
+                {error && (
+                  <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:12, color:'#b91c1c' }}>
+                    <AlertCircle style={{ width:13, height:13 }} />{error}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Generation progress bar */}
+            {isGenerating && (
+              <div style={{ height:3, background:'#f1f5f9' }}>
+                <div style={{ height:'100%', background:'linear-gradient(90deg,#ff5722,#f4511e)', width:`${genProgress}%`, transition:'width 0.3s' }} />
+              </div>
+            )}
+          </div>
+
+          {/* ── Body ──────────────────────────────────────────────────────── */}
+          <div style={{ maxWidth:900, margin:'0 auto', padding:'40px 24px' }}>
+
+            {/* Page title */}
+            <div style={{ marginBottom:36 }}>
+              <div style={{ color:'#ea580c', fontSize:11, fontWeight:700, letterSpacing:'0.12em', marginBottom:10 }}>STEP 2 OF 2</div>
+              <h1 className="mono" style={{ fontSize:34, margin:'0 0 8px', color:'#0f172a' }}>Review &amp; fill in gaps</h1>
+              <p style={{ color:'#64748b', fontSize:14, margin:0 }}>
+                <span style={{ background:'#fee2e2', color:'#991b1b', padding:'2px 9px', borderRadius:20, fontSize:11, fontWeight:700, marginRight:8 }}>needed</span>
+                Core fields must be filled before generating.
+                <span style={{ marginLeft:16, color:'#94a3b8', fontSize:12 }}>
+                  Press{' '}
+                  <kbd style={{ background:'#f1f5f9', padding:'1px 6px', borderRadius:4, fontSize:11, fontFamily:'monospace' }}>⌘ Enter</kbd>
+                  {' '}to generate instantly
+                </span>
+              </p>
+            </div>
+
+            {/* ── Global settings ─────────────────────────────────────────── */}
+            <div style={{ marginBottom:24 }}>
+              <button
+                onClick={() => setGlobalOpen(o => !o)}
+                style={{
+                  width:'100%', border:'1.5px solid #e2e8f0', padding:'14px 18px', cursor:'pointer',
+                  textAlign:'left', display:'flex', alignItems:'center', justifyContent:'space-between',
+                  fontWeight:600, color:'#374151', fontSize:14, background: globalOpen ? '#f8fafc' : 'white',
+                  borderRadius: globalOpen ? '12px 12px 0 0' : 12, transition:'background 0.15s',
+                  fontFamily:'Inter, sans-serif',
+                }}
+              >
+                <span>⚙️&nbsp; Global settings — apply to all concepts</span>
+                <ChevronDown style={{ width:16, height:16, transform: globalOpen ? 'rotate(180deg)' : 'none', transition:'transform 0.2s' }} />
+              </button>
+              {globalOpen && (
+                <div style={{ border:'1.5px solid #e2e8f0', borderTop:'none', borderRadius:'0 0 12px 12px', padding:'18px 20px', background:'#f8fafc' }}>
+                  <p style={{ margin:'0 0 14px', color:'#64748b', fontSize:13 }}>Blank values are skipped — only set values overwrite existing ones.</p>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:16 }}>
+                    {[
+                      { key:'brand',       label:'Brand',        placeholder:'SelfFinder' },
+                      { key:'platform',    label:'Platform',     placeholder:'Meta' },
+                      { key:'orientation', label:'Orientation',  type:'select', options:['','vertical','square','horizontal'] },
+                      { key:'date',        label:'Date (MMDDYY)',placeholder:'050826' },
+                    ].map(({ key, label, placeholder, type, options }) => (
+                      <div key={key}>
+                        <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', marginBottom:6, textTransform:'uppercase', letterSpacing:'0.1em' }}>{label}</div>
+                        {type === 'select'
+                          ? <select className="fi" value={globalVals[key]} onChange={(e) => setGlobalVals(v => ({ ...v, [key]: e.target.value }))}>
+                              {options.map(o => <option key={o} value={o}>{o || '—'}</option>)}
+                            </select>
+                          : <input className="fi" type="text" value={globalVals[key]} placeholder={placeholder}
+                              onChange={(e) => setGlobalVals(v => ({ ...v, [key]: e.target.value }))} />
+                        }
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={applyGlobal}
+                    style={{ background:'#0f172a', color:'white', border:'none', padding:'10px 22px', borderRadius:8, fontWeight:600, fontSize:13, cursor:'pointer', fontFamily:'Inter,sans-serif' }}
+                  >
+                    Apply to all concepts
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── Select controls ───────────────────────────────────────── */}
+            <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:24 }}>
+              <button className="btn-text" onClick={() => setSelected(new Set(concepts.map(c => c.id)))}>Select all</button>
+              <span style={{ color:'#e2e8f0' }}>|</span>
+              <button className="btn-text" onClick={() => setSelected(new Set())}>Deselect all</button>
+              <span style={{ marginLeft:'auto', color:'#64748b', fontSize:13, fontWeight:500 }}>{selected.size} of {concepts.length} selected</span>
+            </div>
+
+            {/* ── Concept cards ─────────────────────────────────────────── */}
+            <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+              {concepts.map((concept, cIdx) => {
+                const isSel      = selected.has(concept.id);
+                const scriptWC   = wordCount(concept.fields.script);
+                const isComplete = CORE_FIELDS.every(f => concept.fields[f]?.trim());
+
+                return (
+                  <div key={concept.id} className={`card anim-in${isSel ? ' selected' : ''}`}
+                       style={{ animationDelay:`${cIdx * 0.07}s` }}>
+
+                    {/* Card header */}
+                    <div
+                      style={{ padding:'16px 20px', display:'flex', alignItems:'center', gap:14, cursor:'pointer', borderBottom:'1px solid #f1f5f9' }}
+                      onClick={() => toggleConcept(concept.id)}
+                    >
+                      <input type="checkbox" checked={isSel} onChange={() => toggleConcept(concept.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ width:18, height:18, cursor:'pointer', accentColor:'#ff5722', flexShrink:0 }} />
+
+                      <div style={{ width:32, height:32, borderRadius:'50%', flexShrink:0, background: isSel ? '#ff5722' : '#94a3b8', display:'flex', alignItems:'center', justifyContent:'center', color:'white', fontWeight:700, fontSize:13, fontFamily:'Space Mono, monospace' }}>
+                        {cIdx + 1}
+                      </div>
+
+                      <input
+                        type="text"
+                        value={concept.name}
+                        className="title-input"
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const next = [...concepts];
+                          next[cIdx] = { ...next[cIdx], name: e.target.value };
+                          setConcepts(next);
+                        }}
+                      />
+
+                      <span style={{ background: isComplete ? '#dcfce7' : '#fff7ed', color: isComplete ? '#166534' : '#92400e', padding:'4px 12px', borderRadius:20, fontSize:11, fontWeight:700, flexShrink:0 }}>
+                        {isComplete ? '✓ Complete' : '⚠ Missing fields'}
+                      </span>
+                    </div>
+
+                    {/* Fields grid */}
+                    <div style={{ padding:'18px 20px 14px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+                      {FIELD_ORDER.map((fieldName) => {
+                        const meta      = FIELD_META[fieldName];
+                        const value     = concept.fields[fieldName] || '';
+                        const isMissing = !value.trim();
+                        const hintKey   = `${concept.id}-${fieldName}`;
+                        const showHint  = activeHint === hintKey;
+                        const colors    = PRIORITY_COLORS[meta.priority];
+                        const isFullW   = fieldName === 'script';
+
+                        return (
+                          <div key={fieldName} style={{ gridColumn: isFullW ? '1 / -1' : undefined, background:colors.bg, border:`1.5px solid ${colors.border}`, borderRadius:10, padding:'11px 14px' }}>
+                            {/* Label row */}
+                            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                              <label style={{ fontSize:10, fontWeight:700, color:'#374151', textTransform:'uppercase', letterSpacing:'0.09em', display:'flex', alignItems:'center', gap:7 }}>
+                                {meta.label}
+                                <span style={{ background:colors.badge, color:colors.badgeText, padding:'1px 8px', borderRadius:20, fontSize:9, fontWeight:700, textTransform:'none', letterSpacing:0 }}>
+                                  {meta.priority}
+                                </span>
+                              </label>
+                              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                                {fieldName === 'script' && scriptWC > 0 && (
+                                  <span style={{ fontSize:11, color:'#94a3b8', fontWeight:500 }}>
+                                    {scriptWC} words · {durationHint(scriptWC)}
+                                  </span>
+                                )}
+                                {meta.hint && (
+                                  <button
+                                    onClick={() => setActiveHint(showHint ? null : hintKey)}
+                                    style={{ background:'none', border:'none', cursor:'pointer', color: showHint ? '#ea580c' : '#cbd5e1', fontSize:15, lineHeight:1, padding:'0 2px', fontWeight:700 }}
+                                  >
+                                    {showHint ? '−' : '?'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Hint bubble */}
+                            {showHint && <div className="hint-bubble">💡 {meta.hint}</div>}
+
+                            {/* Input */}
+                            {meta.inputType === 'select'
+                              ? <select className="fi" value={value} onChange={(e) => updateField(cIdx, fieldName, e.target.value)}>
+                                  {meta.options.map(o => <option key={o} value={o}>{o}</option>)}
+                                </select>
+                              : meta.multiline
+                                ? <textarea className="ft" value={value} placeholder={`Enter ${meta.label.toLowerCase()}…`} onChange={(e) => updateField(cIdx, fieldName, e.target.value)} />
+                                : <input className="fi" type={meta.inputType || 'text'} value={value} placeholder={`Enter ${meta.label.toLowerCase()}…`} onChange={(e) => updateField(cIdx, fieldName, e.target.value)} />
+                            }
+
+                            {isMissing && meta.priority === 'critical' && (
+                              <div style={{ marginTop:6, fontSize:11, color:'#dc2626', fontWeight:600 }}>
+                                ⚠ Required before generating
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* ── Asana task toggle ──────────────────────────────── */}
+                    <div style={{
+                      borderTop: '1px solid #f1f5f9',
+                      padding: '13px 20px',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      background: concept.createAsanaTask ? '#eef2ff' : '#f8fafc',
+                      transition: 'background 0.2s',
+                    }}>
+                      <input
+                        type="checkbox"
+                        id={`asana-${concept.id}`}
+                        checked={concept.createAsanaTask !== false}
+                        onChange={() => toggleAsanaTask(cIdx)}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ width:16, height:16, accentColor:'#4f46e5', cursor:'pointer', flexShrink:0 }}
+                      />
+                      <label htmlFor={`asana-${concept.id}`} style={{ flex:1, cursor:'pointer' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ fontWeight:600, fontSize:13, color:'#1e293b' }}>
+                          📋 Create Asana task
+                        </div>
+                        <div style={{ fontSize:11, color:'#64748b', marginTop:1 }}>
+                          Videos &amp; GIFs board · PDF + DOCX attached automatically
+                        </div>
+                      </label>
+                      {asanaConfigured === true  && concept.createAsanaTask && <span style={{ fontSize:11, color:'#4f46e5', fontWeight:600, flexShrink:0 }}>✓ Connected</span>}
+                      {asanaConfigured === false && concept.createAsanaTask && <span style={{ fontSize:11, color:'#ef4444', fontWeight:600, flexShrink:0 }}>⚠ ASANA_TOKEN not set</span>}
+                      {asanaConfigured === null  && concept.createAsanaTask && <span style={{ fontSize:11, color:'#94a3b8', flexShrink:0 }}>Checking…</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Tip */}
+            <div style={{ marginTop:32, padding:'16px 20px', background:'linear-gradient(135deg,#eff6ff,#f8fafc)', border:'1px solid #bfdbfe', borderRadius:14, fontSize:13, color:'#374151' }}>
+              💡 <strong>Pro tip:</strong> Use{' '}
+              <kbd style={{ background:'#e2e8f0', padding:'2px 7px', borderRadius:4, fontSize:11, fontFamily:'monospace' }}>⌘ Cmd+Enter</kbd>{' '}
+              (Mac) or{' '}
+              <kbd style={{ background:'#e2e8f0', padding:'2px 7px', borderRadius:4, fontSize:11, fontFamily:'monospace' }}>Ctrl+Enter</kbd>{' '}
+              (Windows) to generate instantly.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    {% endraw %}
+  </script>
+</body>
+</html>
