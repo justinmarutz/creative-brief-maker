@@ -200,9 +200,17 @@ def create_asana_tasks():
             entry["ok"] = True
             log.info("Asana task created: %s → %s", task_name, entry["task_url"])
 
-        except Exception:
+        except http.exceptions.HTTPError as exc:
+            body = ""
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = exc.response.text if exc.response else ""
+            log.error("Asana HTTP error for %s: %s — %s", concept.get("title"), exc, body)
+            entry["error"] = f"Asana API error {exc.response.status_code if exc.response else '?'}: {body}"
+        except Exception as exc:
             log.exception("Asana task creation failed for: %s", concept.get("title"))
-            entry["error"] = "Task creation failed — check server log."
+            entry["error"] = f"Task creation failed: {exc}"
 
         results.append(entry)
 
