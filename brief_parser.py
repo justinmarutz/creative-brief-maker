@@ -212,7 +212,188 @@ def _extract_global_metadata(text):
     return global_data
 
 
+# ── VIDEO N: format parser ────────────────────────────────────────────────────
+# Handles submissions like SelfFinder_051126 where the structure is:
+#   VIDEO 1: Title
+#   Format: X Reference: Y Cast: Z   ← all inline on one line
+#   V1A — Sub-variant title
+#   SCRIPT:
+#   ...dialogue...
+#   Primary text (Meta):
+#   ...
+#   VIDEO 2: Title
+#   ...
+
+# Field names that can appear inline in this format (longest first to prevent
+# prefix mis-matches — e.g. "Cast direction" must beat "Cast")
+_VID_FIELDS = sorted([
+    "Cast direction for Erik", "Cast direction",
+    "Why this first", "Why this beats", "Why this",
+    "Primary text (Meta)", "Primary text",
+    "Persistent overlay", "Production",
+    "Reference", "Headline", "Format",
+    "Audio", "Cast", "CTA", "End card",
+], key=len, reverse=True)
+
+_VID_INLINE_RE = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(f) for f in _VID_FIELDS) + r")\s*:",
+    re.IGNORECASE,
+)
+
+
+def _vid_get(text, field_name):
+    """Return the value of `field_name` from inline-concatenated field text."""
+    matches = list(_VID_INLINE_RE.finditer(text))
+    for i, m in enumerate(matches):
+        label = m.group(0).rstrip(":").strip().lower()
+        if label == field_name.lower():
+            start = m.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            return text[start:end].strip()
+    return ""
+
+
+def _vid_duration(text):
+    """Extract a duration string like '30–45 sec' from free text."""
+    m = re.search(r"(\d+\s*[–—-]\s*\d+\s*(?:sec|s\b|min)|\d+\s*(?:sec|s\b|min))",
+                  text, re.IGNORECASE)
+    return m.group(1).replace("-", "–").strip() if m else ""
+
+
+def _build_vid_concept(block, idx, today, parent_meta=""):
+    """Build one concept dict from a VIDEO block or sub-variant block."""
+    concept = {
+        "index": idx, "title": "", "brand": "SelfFinder", "platform": "Meta",
+        "duration": "", "setting": "", "talent": "", "inspiration": "",
+        "reference_link": "", "script": "", "format_vibe": "",
+        "submission_date": today, "missing": [],
+    }
+
+    lines = block.strip().splitlines()
+    if not lines:
+        return None
+
+    # ── Title from first line ────────────────────────────────────────────
+    first = lines[0].strip()
+    m = re.match(r"^VIDEO\s+\d+\s*:\s*(.+)", first)
+    concept["title"] = m.group(1).strip() if m else first
+
+    # ── Inline fields — search block + shared parent metadata ────────────
+    search = parent_meta + "\n" + block
+
+    fmt = _vid_get(search, "Format")
+    if fmt:
+        concept["format_vibe"] = fmt
+        concept["duration"] = _vid_duration(fmt)
+
+    cast = _vid_get(search, "Cast")
+    if cast:
+        concept["talent"] = cast
+
+    ref = _vid_get(search, "Reference")
+    if ref:
+        url_m = re.search(r"https?://\S+", ref)
+        if url_m:
+            concept["reference_link"] = url_m.group(0).rstrip(")")
+            desc = ref[: url_m.start()].rstrip(" —–-").strip()
+            if desc:
+                concept["inspiration"] = desc
+        else:
+            concept["inspiration"] = ref
+
+    # ── Script ─────────────────────────────────────────────────────────
+    # Talking-head / UGC: look for SCRIPT: label
+    script_m = re.search(
+        r"(?m)^SCRIPT\s*:\s*\n(.*?)(?=\nPrimary text|\nEnd card|\nCast direction|\nHeadline|\Z)",
+        block, re.IGNORECASE | re.DOTALL,
+    )
+    if script_m:
+        concept["script"] = script_m.group(1).strip()
+    else:
+        # Compilation format: grab body lines between metadata and Primary text
+        skip_re = re.compile(
+            r"^(?:Format|Reference|Production|Cast|Why this|Audio)\s*:", re.IGNORECASE
+        )
+        stop_re = re.compile(
+            r"^(?:Primary text|End card|Headline)\b", re.IGNORECASE
+        )
+        body, past_meta = [], False
+        for line in lines[1:]:
+            ls = line.strip()
+            if not ls:
+                continue
+            if not past_meta and skip_re.match(ls):
+                continue
+            if stop_re.match(ls):
+                break
+            past_meta = True
+            body.append(ls)
+        if body:
+            concept["script"] = "\n".join(body)
+
+    # ── Setting from stage directions (first non-dialogue script line) ───
+    if concept["script"] and not concept["setting"]:
+        skip_stage = re.compile(
+            r"^(?:Clip \d+|Sequence|Persistent|Audio|Primary|V\d+[A-Z])", re.IGNORECASE
+        )
+        for line in concept["script"].splitlines():
+            ls = line.strip()
+            if ls and not ls.startswith(('"', "“", "(", "[")):
+                if len(ls) > 12 and not skip_stage.match(ls):
+                    concept["setting"] = ls
+                    break
+
+    return concept
+
+
+def _parse_video_doc(text):
+    """Route for submissions using the VIDEO N: / VNA — structure."""
+    today = date.today().strftime("%m%d%y")
+    global_meta = _extract_global_metadata(text)
+    concepts = []
+    idx = 0
+
+    # Split on VIDEO N: boundaries (keep delimiter by using lookahead)
+    vid_blocks = re.split(r"(?m)^(?=VIDEO\s+\d+\s*:)", text)
+
+    for vid_block in vid_blocks:
+        if not re.match(r"VIDEO\s+\d+\s*:", vid_block.strip()):
+            continue
+
+        # Split off sub-variants (V1A —, V1B —, V3A —, etc.)
+        sub_blocks = re.split(r"(?m)^(?=V\d+[A-Z]\s*[—–-])", vid_block)
+        vid_meta = sub_blocks[0]  # shared header + metadata for this VIDEO
+
+        if len(sub_blocks) > 1:
+            for sub in sub_blocks[1:]:
+                idx += 1
+                c = _build_vid_concept(sub, idx, today, vid_meta)
+                if c:
+                    concepts.append(c)
+        else:
+            # No sub-variants — the VIDEO block itself is one concept
+            idx += 1
+            c = _build_vid_concept(vid_meta, idx, today, "")
+            if c:
+                concepts.append(c)
+
+    # Apply global date if detected
+    if global_meta.get("submission_date"):
+        for c in concepts:
+            c["submission_date"] = global_meta["submission_date"]
+
+    # Recompute missing flags
+    for c in concepts:
+        c["missing"] = [f for f in ["duration", "setting", "inspiration"] if not c.get(f)]
+
+    return concepts
+
+
 def parse_submission(text):
+    # ── VIDEO N: format (e.g. SelfFinder_051126 style) ──────────────────
+    if re.search(r"(?m)^VIDEO\s+\d+\s*:", text):
+        return _parse_video_doc(text)
+
     # ── Split into concept blocks ────────────────────────────
     pattern = r"(?m)^(?:Script|Concept)\s+\d+\s*[:\.]"
     parts = re.split(pattern, text)
