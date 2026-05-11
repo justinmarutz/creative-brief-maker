@@ -153,18 +153,29 @@ def create_asana_tasks():
             title      = concept.get("title", "Brief")
             task_name  = f"{title} — {brand} UGC Brief"
 
-            # Create task in the Videos & GIFs board
-            # Note: use memberships only (not projects) — sending both causes a 400
+            # Create task — try with section placement first, fall back to project-only
+            task_payload = {
+                "name": task_name,
+                "notes": _build_task_notes(concept),
+                "projects": [ASANA_PROJECT_GID],
+                "memberships": [{"project": ASANA_PROJECT_GID, "section": ASANA_SECTION_GID}],
+            }
             resp = http.post(
                 f"{ASANA_API}/tasks",
                 headers={**_asana_headers(), "Content-Type": "application/json"},
-                json={"data": {
-                    "name": task_name,
-                    "notes": _build_task_notes(concept),
-                    "memberships": [{"project": ASANA_PROJECT_GID, "section": ASANA_SECTION_GID}],
-                }},
+                json={"data": task_payload},
                 timeout=15,
             )
+            if resp.status_code == 400:
+                # Section GID may be stale — retry without memberships
+                log.warning("Section placement failed (%s), retrying without section", resp.json())
+                task_payload.pop("memberships")
+                resp = http.post(
+                    f"{ASANA_API}/tasks",
+                    headers={**_asana_headers(), "Content-Type": "application/json"},
+                    json={"data": task_payload},
+                    timeout=15,
+                )
             resp.raise_for_status()
             task_gid = resp.json()["data"]["gid"]
             entry["task_url"] = f"https://app.asana.com/0/{ASANA_PROJECT_GID}/{task_gid}"
