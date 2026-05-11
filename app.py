@@ -154,13 +154,13 @@ def create_asana_tasks():
             task_name  = f"{title} — {brand} UGC Brief"
 
             # Create task in the Videos & GIFs board
+            # Note: use memberships only (not projects) — sending both causes a 400
             resp = http.post(
                 f"{ASANA_API}/tasks",
                 headers={**_asana_headers(), "Content-Type": "application/json"},
                 json={"data": {
                     "name": task_name,
                     "notes": _build_task_notes(concept),
-                    "projects": [ASANA_PROJECT_GID],
                     "memberships": [{"project": ASANA_PROJECT_GID, "section": ASANA_SECTION_GID}],
                 }},
                 timeout=15,
