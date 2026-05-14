@@ -34,6 +34,9 @@ def _asana_headers():
 def _build_task_notes(concept):
     """Structured plain-text description for the Asana task."""
     lines = []
+    if concept.get("concept_id"):
+        lines.append(f"Brief ID: {concept['concept_id']}")
+        lines.append("")
     for label, key in [
         ("Platform",       "platform"),
         ("Duration",       "duration"),
@@ -149,9 +152,11 @@ def create_asana_tasks():
     for concept in concepts:
         entry = {"title": concept.get("title", "Brief"), "ok": False}
         try:
-            brand      = concept.get("brand", "SelfFinder")
-            title      = concept.get("title", "Brief")
-            task_name  = f"{title} — {brand} UGC Brief"
+            brand       = concept.get("brand", "SelfFinder")
+            title       = concept.get("title", "Brief")
+            concept_id  = concept.get("concept_id", "")
+            id_prefix   = f"[{concept_id}] " if concept_id else ""
+            task_name   = f"{id_prefix}{title} — {brand} UGC Brief"
 
             # Create task — try with section placement first, fall back to project-only
             task_payload = {

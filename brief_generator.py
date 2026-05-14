@@ -66,7 +66,9 @@ def generate_pdf_bytes(concept):
     )
 
     logo_s = ParagraphStyle("logo", fontName="Helvetica-Bold", fontSize=13, textColor=ORANGE)
-    title_s = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=22, leading=26, spaceAfter=10)
+    title_s = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=22, leading=26, spaceAfter=4)
+    id_s   = ParagraphStyle("id",    fontName="Helvetica",      fontSize=10, leading=13, spaceAfter=10,
+                            textColor=colors.HexColor("#888888"))
     h2_s   = ParagraphStyle("h2",    fontName="Helvetica-Bold", fontSize=14, leading=17, spaceBefore=10, spaceAfter=6)
     fi_s   = ParagraphStyle("fi",    fontName="Helvetica",      fontSize=10, leading=14, spaceAfter=3)
     sc_s   = ParagraphStyle("sc",    fontName="Helvetica",      fontSize=10, leading=14, spaceAfter=5)
@@ -83,10 +85,14 @@ def generate_pdf_bytes(concept):
     brand = _xml_escape(concept.get("brand") or "Self Finder")
     title = _xml_escape(concept.get("title") or "Brief")
 
+    concept_id = _xml_escape(concept.get("concept_id") or "")
+
     story = []
     story.append(Paragraph("&#169; adtechnacity", logo_s))
     story.append(HRFlowable(width="100%", thickness=1.5, color=ORANGE, spaceAfter=14, spaceBefore=6))
     story.append(Paragraph(f"Creative Brief: {brand} - {title}", title_s))
+    if concept_id:
+        story.append(Paragraph(f"Brief ID: {concept_id}", id_s))
 
     # Section 1
     story.append(Paragraph("1. Project Overview", h2_s))
@@ -259,12 +265,21 @@ def generate_docx_bytes(concept):
     # Title
     brand = concept.get("brand", "Self Finder")
     title = concept.get("title", "Brief")
+    concept_id = concept.get("concept_id", "")
     tp = doc.add_paragraph()
     tp.paragraph_format.space_before = Pt(10)
-    tp.paragraph_format.space_after = Pt(10)
+    tp.paragraph_format.space_after = Pt(4)
     tr = tp.add_run(f"Creative Brief: {brand} - {title}")
     tr.bold = True
     tr.font.size = Pt(22)
+
+    if concept_id:
+        id_p = doc.add_paragraph()
+        id_p.paragraph_format.space_before = Pt(0)
+        id_p.paragraph_format.space_after = Pt(10)
+        id_r = id_p.add_run(f"Brief ID: {concept_id}")
+        id_r.font.size = Pt(10)
+        id_r.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
     # Section 1
     def section_heading(text):
