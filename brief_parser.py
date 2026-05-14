@@ -386,9 +386,10 @@ def _parse_video_doc(text):
     for c in concepts:
         c["missing"] = [f for f in ["duration", "setting", "inspiration"] if not c.get(f)]
 
-    # Assign concept IDs (MMDDYY_N)
+    # Assign concept IDs (MMDDYY_HHMM_N) — timestamp ensures uniqueness across same-day batches
+    now_hhmm = datetime.datetime.now().strftime("%H%M")
     for c in concepts:
-        c["concept_id"] = f"{c.get('submission_date', date.today().strftime('%m%d%y'))}_{c['index']}"
+        c["concept_id"] = f"{c.get('submission_date', date.today().strftime('%m%d%y'))}_{now_hhmm}_{c['index']}"
 
     return concepts
 
@@ -450,8 +451,10 @@ def parse_submission(text):
     for c in concepts:
         c["missing"] = [f for f in ["duration", "setting", "inspiration"] if not c.get(f)]
 
-    # ── Assign concept IDs (MMDDYY_N) ────────────────────────
+    # ── Assign concept IDs (MMDDYY_HHMM_N) ──────────────────
+    # Timestamp captured once per batch so all concepts in one upload share the same HHMM
+    now_hhmm = datetime.datetime.now().strftime("%H%M")
     for c in concepts:
-        c["concept_id"] = f"{c.get('submission_date', date.today().strftime('%m%d%y'))}_{c['index']}"
+        c["concept_id"] = f"{c.get('submission_date', date.today().strftime('%m%d%y'))}_{now_hhmm}_{c['index']}"
 
     return concepts
